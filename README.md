@@ -1,22 +1,22 @@
 ![128](https://github.com/user-attachments/assets/f5cf5381-7e22-4b27-91ff-03328285a26c)
-# PassfieldGuard
+# PassfieldGuardWarn
 
-A Google Chrome browser extension that blocks all password fields unless the URL is whitelisted. This will prevent your end-users from filling in passwords when unknowingly visiting a phishing web page or when receiving an HTML page as an attachment in their email.
+This fork from PassfieldGuard does not block password fields on non-whitelisted urls, but instead warns the user. This modification is necessary if users have many legitimate websites they have log in to, and the difference between company and other credentials can not be made. Manualy keeping up with the long whitelist is too much work.
+It is based on the Google Chrome browser extension 'PassfieldGuard' originally made by Securitydotwf.
 
-# Chrome Web store
-1st version is now available on the Chrome webstore. The upcoming version will allow you to change settings in a locally configured config.json file
-Next update will be made before **12/12/2024**
-https://chromewebstore.google.com/detail/passfieldguard/dhlkhhfbaljlbokoehjkfpnlhcfanlpk
+This will (hopefully) prevent your end-users from filling in passwords when unknowingly visiting a phishing web page or when receiving an HTML page as an attachment in their email.
+
+Functionality for users to request whitelisting by mail will be removed later on.
 
 ## Introduction
 
 How many passwords do you need to fill in on a weekly basis on your corporate laptop? Generally, end-users are required to enter only a few passwords each week. By manually whitelisting these URLs, you can ensure that no passwords are leaked through phishing attempts. Most companies use Microsoft SSO, where there is minimal need to enter passwords frequently.
 
-PassfieldGuard locks all password fields on webpages unless the URL is specifically whitelisted. This extension is ideal for larger organizations where browser settings are enforced.
+PassfieldGuardWarn displays a warning if a webpage contains password fields unless the URL is specifically whitelisted. 
 
 ## Features
 
-- Blocks all password fields unless the URL is added to a whitelist.
+- Warns if a webpage has password fields unless the URL is present on the whitelist.
 - Open-source and free to use.
 
 ## Current limitations
@@ -27,15 +27,16 @@ PassfieldGuard locks all password fields on webpages unless the URL is specifica
 ## Installation (Developer Mode, for use on single machine)
 
 1. Clone the repository to your local machine.
-2. If required, change whitelisturl in `DATA/config.json`, or manually add whitelist URLs in the `DATA/whitelist.txt` file.
-3. Change the support email address in `DATA/config.json', which will be used for end-users to request URL whitelisting.
-4. If wanted, change the other values in `DATA/config.json'
+2. If required, change whitelisturl in `config.json`, or manually add whitelist URLs in the `DATA/whitelist.txt` file. Note config.json has moved from the 'DATA' folder to the root. No need to have this config.json in C:\json anymore
+3. Change the support email address in `config.json', which will be used for end-users to request URL whitelisting.
+4. If wanted, change the other values in `config.json'
 5. Open the `chrome://extensions/` page in your Chrome browser.
 6. Enable "Developer mode" in the top right corner.
 7. Click on "Load unpacked" and select the `extension/` directory from the cloned repository.
 8. The extension should now be installed and active in your browser.
 
 ## Enterprise Installation (Distribution via .crx file)
+(not reviewed)
 
 If you want to distribute PassfieldGuard within your enterprise or organization without publishing it on the Chrome Web Store, follow the steps below to create a `.crx` file and deploy it internally.
 
@@ -85,15 +86,15 @@ ExtensionInstallForcelist = https://yourserver.com/path/to/extension.crx
 
 ## Usage
 
-Once the extension is loaded and active, all password fields will be blocked and will show a red border. There is also a button available that will open your default email client to send a request to your IT support team.
+Once the extension is loaded and active, any password fields on a non-witelisted webpage will result in a warning at the top of the broweser page. 
 
 ## Default whitelist.txt
 
-The default `whitelist.txt` is located in `DATA/whitelist.txt`. It contains `login.microsoftonline.com` and `example.com` by default.
+The default `whitelist.txt` is located in `DATA/whitelist.txt`. It contains `login.microsoftonline.com` by default.
 
 ## Overview
 
-PassfieldGuard is designed to enhance security in large organizations by preventing unauthorized access to password fields. By using a whitelist approach, it minimizes the risk of phishing attacks and ensures that only trusted URLs can request password input.
+PassfieldGuard is designed to enhance security in large organizations by warning users entering passwords on non-whitelisted websites. By using a whitelist approach, it minimizes the risk of phishing attacks.
 
 For more information, visit our GitHub repository.
 
