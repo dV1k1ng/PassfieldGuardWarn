@@ -1,3 +1,1 @@
 login.microsoftonline.com
-example.com
-
