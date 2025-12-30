@@ -8,143 +8,106 @@ function debounce(func, wait) {
 }
 
 const currentDomain = window.location.hostname;
-console.log("Current domain:", currentDomain);
+let warningBarAdded = false;
 
-// Send a message to the background script to check if the domain is whitelisted
-chrome.runtime.sendMessage({ action: "isWhitelisted", domain: currentDomain }, (response) => {
-  if (response && response.isWhitelisted === false) {
-    console.log(`${currentDomain} is not whitelisted. Blocking password fields.`);
+// Create the warning bar element
+function createWarningBar() {
+  const bar = document.createElement("div");
+  bar.id = "passfieldguard-warning-bar";
+  bar.style.position = "fixed";
+  bar.style.top = "0";
+  bar.style.left = "0";
+  bar.style.width = "100%";
+  bar.style.backgroundColor = "#ff4444";
+  bar.style.color = "white";
+  bar.style.padding = "12px 20px";
+  bar.style.fontFamily = "Arial, sans-serif";
+  bar.style.fontSize = "14px";
+  bar.style.textAlign = "center";
+  bar.style.zIndex = "999999";
+  bar.style.boxShadow = "0 4px 8px rgba(0,0,0,0.2)";
+  bar.style.display = "flex";
+  bar.style.justifyContent = "center";
+  bar.style.alignItems = "center";
+  bar.style.gap = "20px";
 
-    try {
-      blockPasswordFields(document);
+  const message = document.createElement("span");
+  message.textContent = `⚠ Warning: This site (${currentDomain}) is not on the trusted whitelist. Entering passwords here may be risky.`;
+  bar.appendChild(message);
 
-      // Also check for password fields in dynamically loaded content (e.g., login forms)
-      const loginFormSelector = 'form, .login, .auth, .sign-in'; // Adjust as needed for your use case
-      const loginForms = document.querySelectorAll(loginFormSelector);
-
-      loginForms.forEach((form) => {
-        const observer = new MutationObserver(debounce(() => {
-          blockPasswordFields(form);
-        }, 300));
-
-        observer.observe(form, {
-          childList: true,
-          subtree: true,
-        });
-      });
-
-      // Handle password fields inside iframes (if any)
-      document.querySelectorAll("iframe").forEach((iframe) => {
-        try {
-          const iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
-          if (iframeDocument) {
-            const iframeObserver = new MutationObserver(debounce(() => {
-              blockPasswordFields(iframeDocument);
-            }, 300));
-
-            iframeObserver.observe(iframeDocument.body, {
-              childList: true,
-              subtree: true,
-            });
-          }
-        } catch (error) {
-          console.error("Error accessing iframe content:", error);
-        }
-      });
-
-      // Handle Shadow DOMs properly (iterate through all shadow hosts and query password fields inside)
-      const shadowHosts = document.querySelectorAll('*');
-      shadowHosts.forEach((host) => {
-        if (host.shadowRoot) {
-          const shadowDoc = host.shadowRoot;
-          blockPasswordFields(shadowDoc); // Query password fields within the shadow DOM
-        }
-      });
-
-    } catch (error) {
-      console.error("Error blocking password fields:", error);
-    }
-  } else {
-    console.log(`${currentDomain} is whitelisted. Password fields should not be blocked.`);
-  }
-});
-
-// Block password fields using a robust selector
-function blockPasswordFields(doc) {
-  // Use a more robust selector to detect password fields
-  const passwordFields = doc.querySelectorAll('input[type="password"], input[class*="password"], input[id*="password"]');
-  passwordFields.forEach((field) => {
-    // If the field is inside a critical form, don't block it
-    if (field.closest('form') && field.closest('form').querySelector('.login, .auth, .sign-in')) {
-      return;
-    }
-
-    // Ensure the field is not null or undefined before manipulating it
-    if (field) {
-      // Check if the button already exists
-      if (!field.nextSibling || !field.nextSibling.classList || !field.nextSibling.classList.contains('request-unlock-button')) {
-        field.style.border = "2px solid red";
-        field.style.boxShadow = "0 0 5px 2px rgba(255, 0, 0, 0.7)";
-        blockFieldInteractions(field);
-        field.setAttribute("autocomplete", "new-password"); // Prevent autofill
-        field.setAttribute("tabindex", "-1"); // Prevent focus
-        field.style.pointerEvents = "none"; // Disable clicking
-
-        const requestButton = createRequestButton();
-        field.parentNode.insertBefore(requestButton, field.nextSibling);
-      }
-    } else {
-      console.error('Password field not found or is null');
-    }
-  });
-}
-
-// Prevent interactions with the field
-function blockFieldInteractions(field) {
-  // Prevent typing, pasting, dragging, etc.
-  field.addEventListener("keydown", (event) => event.preventDefault());
-  field.addEventListener("keypress", (event) => event.preventDefault());
-  field.addEventListener("input", (event) => event.preventDefault());
-  field.addEventListener("paste", (event) => event.preventDefault());
-  field.addEventListener("dragover", (event) => event.preventDefault());
-  field.addEventListener("drop", (event) => event.preventDefault());
-  field.addEventListener("contextmenu", (event) => event.preventDefault());
-}
-
-// Create the "Request Unlock" button
-function createRequestButton() {
   const requestButton = document.createElement("button");
-  requestButton.classList.add('request-unlock-button');
-  requestButton.style.padding = "5px";
-  requestButton.style.backgroundColor = "#FF0000";
-  requestButton.style.color = "white";
+  requestButton.textContent = "Request to Add to Whitelist";
+  requestButton.style.padding = "8px 16px";
+  requestButton.style.backgroundColor = "white";
+  requestButton.style.color = "#ff4444";
   requestButton.style.border = "none";
-  requestButton.style.borderRadius = "5px";
+  requestButton.style.borderRadius = "4px";
   requestButton.style.cursor = "pointer";
-  requestButton.style.fontSize = "12px";
-  requestButton.style.marginLeft = "10px";
-  requestButton.style.height = "100%";
-  requestButton.style.verticalAlign = "middle";
+  requestButton.style.fontWeight = "bold";
 
-  requestButton.textContent = "Request Unlock";  // Ensure button text is set
-
-  // Fetch support email and other details from background.js and use it for the mailto link
+  // Fetch email details from background script
   chrome.runtime.sendMessage({ action: "getSupportEmail" }, (response) => {
     const supportEmail = response && response.supportEmail ? response.supportEmail : "support@example.com";
     const requestButtonTitle = response && response.requestButtonTitle ? response.requestButtonTitle : "Request to unlock";
     const emailSubject = response && response.emailSubject ? response.emailSubject : "Request to unlock password field";
-    const emailBody = response && response.emailBody ? response.emailBody : `Dear Admin,\n\nI would like to request unlocking the password field on the website: ${window.location.href}.\n\nThank you!`;
-    const hoverText = response && response.hoverText ? response.hoverText : "Click to request unlocking this password field. Your request will be reviewed by the IT security team.";
+    const emailBody = response && response.emailBody ? response.emailBody : `Dear Admin,\n\nI would like to request adding the website ${window.location.href} to the password whitelist.\n\nThank you!`;
+    const hoverText = response && response.hoverText ? response.hoverText : "Click to request adding this site to the trusted whitelist.";
 
     requestButton.title = hoverText;
     requestButton.textContent = requestButtonTitle;
 
-    const mailtoLink = `mailto:${supportEmail}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody + "\n\n" + window.location.href)}`;
+    const mailtoLink = `mailto:${supportEmail}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody + "\n\nSite: " + window.location.href)}`;
 
     requestButton.addEventListener("click", () => {
       window.location.href = mailtoLink;
     });
   });
 
-  return requestButton;
+  bar.appendChild(requestButton);
+  return bar;
 }
+
+// Check if the page has any password fields (robust selector)
+function hasPasswordFields(doc) {
+  const selectors = 'input[type="password"], input[class*="password" i], input[id*="password" i]';
+  return doc.querySelector(selectors) !== null;
+}
+
+// Main logic
+chrome.runtime.sendMessage({ action: "isWhitelisted", domain: currentDomain }, (response) => {
+  if (response && response.isWhitelisted === false) {
+    // Check current document
+    if (hasPasswordFields(document)) {
+      document.body.insertBefore(createWarningBar(), document.body.firstChild);
+      warningBarAdded = true;
+    }
+
+    // Observe for dynamic content (new password fields appearing later)
+    const observer = new MutationObserver(debounce(() => {
+      if (!warningBarAdded && hasPasswordFields(document)) {
+        document.body.insertBefore(createWarningBar(), document.body.firstChild);
+        warningBarAdded = true;
+      }
+    }, 500));
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Also handle iframes (basic support)
+    document.querySelectorAll("iframe").forEach((iframe) => {
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc && hasPasswordFields(iframeDoc)) {
+          if (!warningBarAdded) {
+            document.body.insertBefore(createWarningBar(), document.body.firstChild);
+            warningBarAdded = true;
+          }
+        }
+      } catch (e) {
+        // Cross-origin iframe – can't access
+      }
+    });
+  }
+});
