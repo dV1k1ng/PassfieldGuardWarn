@@ -1,7 +1,8 @@
 {
-  "whitelistUrl": "https://Example.com/whitelist.txt",
+  "whitelistUrl": " data/whitelist.txt",
   "supportEmail": "thisisatest@yourdomain.com",
   "requestButtonTitle": "Request to unlock",
   "emailSubject": "Request to unlock password field",
   "emailBody": "Dear Admin,\n\nI would like to request unlocking the password field on the website: ${window.location.href}.\n\nThank you!"
+
 }
