@@ -1,97 +1,114 @@
-let supportEmail = "support@example.com";  // Default email if not configured
-let requestButtonTitle = "Request to Add to Whitelist";  // Updated default for your new behavior
-let emailSubject = "Whitelist Request for Site";  // Updated default
-let emailBody = "Dear Admin,\n\nPlease add this site to the whitelist: ${window.location.href}.\n\nThanks!";  // Updated default
-let hoverText = "Click to request adding this site to the trusted whitelist.";  // Add if you want to use in content.js
-let whitelist = [];
+let supportEmail = "support@example.com";
+let requestButtonTitle = "Request to Add to Whitelist";
+let emailSubject = "Whitelist Request for Site";
+let emailBody = "Dear Admin,\n\nPlease add this site to the whitelist: ${window.location.href}.\n\nThanks!";
+let hoverText = "Click to request adding this site to the trusted whitelist.";
+let whitelistPatterns = [];  // Array of {original, isWildcard, suffix}
 
-// A flag to indicate if the configuration has finished loading
 let configLoaded = false;
-let whitelistUrl = "";  // Initialize without a default URL
+let whitelistUrl = "";
 
-// Fetch configuration from bundled JSON file
+// Parse pattern: store the suffix to match (".baseDomain")
+function parsePattern(pattern) {
+  const trimmed = pattern.trim().toLowerCase();
+  if (trimmed.startsWith("*.")) {
+    const base = trimmed.slice(2);  // remove "*."
+    return { original: pattern, isWildcard: true, suffix: "." + base };
+  } else {
+    return { original: pattern, isWildcard: false, suffix: "." + trimmed };
+  }
+}
+
+// Check if domain matches the pattern
+function matchesPattern(domainLower, pattern) {
+  if (pattern.isWildcard) {
+    // For *.example.com: must end with ".example.com" and have content before it (at least one subdomain)
+    return domainLower.endsWith(pattern.suffix) &&
+           domainLower.length > pattern.suffix.length;  // ensures prefix exists
+  } else {
+    // For example.com: exact match OR ends with ".example.com" (subdomains)
+    const suffixLen = pattern.suffix.length;
+    return domainLower === pattern.suffix.substring(1) ||  // bare domain
+           (domainLower.endsWith(pattern.suffix) && 
+            domainLower.length > suffixLen);  // subdomain (prefix exists)
+  }
+}
+
+// Load config
 async function loadConfig() {
   try {
     const configUrl = chrome.runtime.getURL('config.json');
     const response = await fetch(configUrl);
     const config = await response.json();
 
-    console.log("Bundled config file items:", config);  // Log the config items
-
-    // Use values from config file if available
-    whitelistUrl = config.whitelistUrl;
+    whitelistUrl = config.whitelistUrl || "";
     supportEmail = config.supportEmail || supportEmail;
     requestButtonTitle = config.requestButtonTitle || requestButtonTitle;
     emailSubject = config.emailSubject || emailSubject;
     emailBody = config.emailBody || emailBody;
-    hoverText = config.hoverText || hoverText;  // Optional, if you add to content.js
+    hoverText = config.hoverText || hoverText;
 
     if (!whitelistUrl) {
-      throw new Error("whitelistUrl is not defined in config file.");
+      console.warn("No whitelistUrl in config.json");
+      return;
     }
 
-    console.log("Using whitelist URL:", whitelistUrl);
-    console.log("Using support email:", supportEmail);
-    console.log("Using request button title:", requestButtonTitle);
-    console.log("Using email subject:", emailSubject);
-    console.log("Using email body:", emailBody);
-
-    configLoaded = true;  // Mark config as loaded
-    await loadWhitelist(whitelistUrl);  // Load the whitelist after fetching config
-
-    // Start periodic update check (if remote)
-    setInterval(() => loadWhitelist(whitelistUrl), 60000);  // Check for updates every 1 minute
+    configLoaded = true;
+    await loadWhitelist(whitelistUrl);
+    setInterval(() => loadWhitelist(whitelistUrl), 60000);
   } catch (error) {
     console.error("Error loading config:", error);
-    // Optional: Fallback to a default whitelistUrl if needed
-    // whitelistUrl = chrome.runtime.getURL('data/whitelist.txt');
-    // await loadWhitelist(whitelistUrl);
   }
 }
 
-// Load the whitelist (handles relative or absolute URLs)
-async function loadWhitelist(whitelistUrl) {
+// Load whitelist
+async function loadWhitelist(url) {
   try {
-    if (!configLoaded && !whitelistUrl) {
-      console.log("Config not loaded and no fallback URL.");
-      return; // Don't proceed if no URL
-    }
-    
-    // If relative, convert to full extension URL
-    let fullUrl = whitelistUrl;
-    if (!whitelistUrl.startsWith('http://') && !whitelistUrl.startsWith('https://') && !whitelistUrl.startsWith('file://')) {
-      fullUrl = chrome.runtime.getURL(whitelistUrl);
-    }
-    
+    let fullUrl = url.startsWith('http') ? url : chrome.runtime.getURL(url);
+
     console.log("Loading whitelist from:", fullUrl);
     const response = await fetch(fullUrl);
     const text = await response.text();
-    console.log("Whitelist content:", text);
-    whitelist = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-    console.log("Parsed whitelist:", whitelist);
+
+    const lines = text.split("\n")
+      .map(l => l.trim())
+      .filter(l => l.length > 0 && !l.startsWith("#"));
+
+    whitelistPatterns = lines.map(parsePattern);
+
+    console.log("Loaded whitelist patterns:", whitelistPatterns.map(p => p.original));
   } catch (error) {
     console.error("Error loading whitelist:", error);
+    whitelistPatterns = [];
   }
 }
 
-// Listen for messages from content scripts
+// Check if domain is whitelisted
+function isDomainWhitelisted(domain) {
+  if (whitelistPatterns.length === 0) return false;
+
+  const domainLower = domain.toLowerCase();
+
+  return whitelistPatterns.some(pattern => {
+    const match = matchesPattern(domainLower, pattern);
+    if (match) {
+      console.log(`MATCH: ${domain} matches pattern ${pattern.original}`);
+    }
+    return match;
+  });
+}
+
+// Message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "isWhitelisted") {
-    console.log("Received domain check request for:", message.domain);
-    console.log("Current whitelist:", whitelist);  // Log for debugging
-    const isWhitelisted = whitelist.includes(message.domain);
-    console.log(`Checking if ${message.domain} is whitelisted:`, isWhitelisted);
-    sendResponse({ isWhitelisted });
+    const result = isDomainWhitelisted(message.domain);
+    console.log(`Whitelist result for ${message.domain}: ${result}`);
+    sendResponse({ isWhitelisted: result });
   } else if (message.action === "getSupportEmail") {
-    if (configLoaded) {
-      sendResponse({ supportEmail, requestButtonTitle, emailSubject, emailBody, hoverText });
-    } else {
-      sendResponse({ supportEmail: "support@example.com", requestButtonTitle, emailSubject, emailBody, hoverText });  // Fallback
-    }
+    sendResponse({ supportEmail, requestButtonTitle, emailSubject, emailBody, hoverText });
   }
-  return true;  // Keep the message channel open for async
+  return true;
 });
 
-// Load the config on startup
+// Startup
 loadConfig();
-
