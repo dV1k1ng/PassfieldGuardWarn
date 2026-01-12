@@ -6,6 +6,7 @@ let hoverText = "Click to request adding this site to the trusted whitelist.";
 let whitelistPatterns = [];  // Array of {original, isWildcard, suffix}
 
 let configLoaded = false;
+let isLoading = false;  // Prevent concurrent loads
 let whitelistUrl = "";
 
 // Parse pattern: store the suffix to match (".baseDomain")
@@ -34,8 +35,10 @@ function matchesPattern(domainLower, pattern) {
   }
 }
 
-// Load config
+// Load config (now returns a promise for awaiting)
 async function loadConfig() {
+  if (isLoading || configLoaded) return;  // Skip if already loading or loaded
+  isLoading = true;
   try {
     const configUrl = chrome.runtime.getURL('config.json');
     const response = await fetch(configUrl);
@@ -50,14 +53,18 @@ async function loadConfig() {
 
     if (!whitelistUrl) {
       console.warn("No whitelistUrl in config.json");
+      isLoading = false;
       return;
     }
 
-    configLoaded = true;
     await loadWhitelist(whitelistUrl);
+    configLoaded = true;
+    console.log("Config and whitelist fully loaded.");
     setInterval(() => loadWhitelist(whitelistUrl), 60000);
   } catch (error) {
     console.error("Error loading config:", error);
+  } finally {
+    isLoading = false;
   }
 }
 
@@ -98,17 +105,23 @@ function isDomainWhitelisted(domain) {
   });
 }
 
-// Message listener
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+// Message listener (now async to await loading)
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.action === "isWhitelisted") {
+    if (!configLoaded) {
+      await loadConfig();
+    }
     const result = isDomainWhitelisted(message.domain);
     console.log(`Whitelist result for ${message.domain}: ${result}`);
     sendResponse({ isWhitelisted: result });
   } else if (message.action === "getSupportEmail") {
+    if (!configLoaded) {
+      await loadConfig();
+    }
     sendResponse({ supportEmail, requestButtonTitle, emailSubject, emailBody, hoverText });
   }
-  return true;
+  return true;  // Keep channel open for async
 });
 
-// Startup
+// Startup: Kick off initial load
 loadConfig();
