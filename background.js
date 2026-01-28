@@ -6,7 +6,7 @@ let hoverText = "Click to request adding this site to the trusted whitelist.";
 let whitelistPatterns = [];  // Array of {original, isWildcard, suffix}
 
 let configLoaded = false;
-let isLoading = false;  // Prevent concurrent loads
+let configLoadPromise = null;  // Store the promise to avoid duplicate loads
 let whitelistUrl = "";
 
 // Parse pattern: store the suffix to match (".baseDomain")
@@ -35,37 +35,50 @@ function matchesPattern(domainLower, pattern) {
   }
 }
 
-// Load config (now returns a promise for awaiting)
+// Load config (returns a promise that can be reused)
 async function loadConfig() {
-  if (isLoading || configLoaded) return;  // Skip if already loading or loaded
-  isLoading = true;
-  try {
-    const configUrl = chrome.runtime.getURL('config.json');
-    const response = await fetch(configUrl);
-    const config = await response.json();
-
-    whitelistUrl = config.whitelistUrl || "";
-    supportEmail = config.supportEmail || supportEmail;
-    requestButtonTitle = config.requestButtonTitle || requestButtonTitle;
-    emailSubject = config.emailSubject || emailSubject;
-    emailBody = config.emailBody || emailBody;
-    hoverText = config.hoverText || hoverText;
-
-    if (!whitelistUrl) {
-      console.warn("No whitelistUrl in config.json");
-      isLoading = false;
-      return;
-    }
-
-    await loadWhitelist(whitelistUrl);
-    configLoaded = true;
-    console.log("Config and whitelist fully loaded.");
-    setInterval(() => loadWhitelist(whitelistUrl), 60000);
-  } catch (error) {
-    console.error("Error loading config:", error);
-  } finally {
-    isLoading = false;
+  // If already loaded, return immediately
+  if (configLoaded) {
+    return Promise.resolve();
   }
+  
+  // If currently loading, return the existing promise
+  if (configLoadPromise) {
+    return configLoadPromise;
+  }
+  
+  // Start loading
+  configLoadPromise = (async () => {
+    try {
+      const configUrl = chrome.runtime.getURL('config.json');
+      const response = await fetch(configUrl);
+      const config = await response.json();
+
+      whitelistUrl = config.whitelistUrl || "";
+      supportEmail = config.supportEmail || supportEmail;
+      requestButtonTitle = config.requestButtonTitle || requestButtonTitle;
+      emailSubject = config.emailSubject || emailSubject;
+      emailBody = config.emailBody || emailBody;
+      hoverText = config.hoverText || hoverText;
+
+      if (!whitelistUrl) {
+        console.warn("No whitelistUrl in config.json");
+        return;
+      }
+
+      await loadWhitelist(whitelistUrl);
+      configLoaded = true;
+      console.log("Config and whitelist fully loaded.");
+      
+      // Set up periodic refresh (every 60 seconds)
+      setInterval(() => loadWhitelist(whitelistUrl), 60000);
+    } catch (error) {
+      console.error("Error loading config:", error);
+      throw error;
+    }
+  })();
+  
+  return configLoadPromise;
 }
 
 // Load whitelist
@@ -105,23 +118,49 @@ function isDomainWhitelisted(domain) {
   });
 }
 
-// Message listener (now async to await loading)
-chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+// Message listener - ALWAYS wait for config to load before responding
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "isWhitelisted") {
-    if (!configLoaded) {
-      await loadConfig();
-    }
-    const result = isDomainWhitelisted(message.domain);
-    console.log(`Whitelist result for ${message.domain}: ${result}`);
-    sendResponse({ isWhitelisted: result });
+    // Ensure config is loaded before checking whitelist
+    loadConfig().then(() => {
+      const result = isDomainWhitelisted(message.domain);
+      console.log(`Whitelist result for ${message.domain}: ${result}`);
+      sendResponse({ isWhitelisted: result });
+    }).catch((error) => {
+      console.error("Error in isWhitelisted:", error);
+      // On error, assume not whitelisted for safety
+      sendResponse({ isWhitelisted: false });
+    });
+    
+    return true;  // Keep channel open for async response
+    
   } else if (message.action === "getSupportEmail") {
-    if (!configLoaded) {
-      await loadConfig();
-    }
-    sendResponse({ supportEmail, requestButtonTitle, emailSubject, emailBody, hoverText });
+    // Ensure config is loaded before returning support details
+    loadConfig().then(() => {
+      sendResponse({ 
+        supportEmail, 
+        requestButtonTitle, 
+        emailSubject, 
+        emailBody, 
+        hoverText 
+      });
+    }).catch((error) => {
+      console.error("Error in getSupportEmail:", error);
+      // Return defaults on error
+      sendResponse({ 
+        supportEmail: "support@example.com", 
+        requestButtonTitle: "Request to Add to Whitelist",
+        emailSubject: "Whitelist Request for Site",
+        emailBody: "Dear Admin,\n\nPlease add this site to the whitelist: ${window.location.href}.\n\nThanks!",
+        hoverText: "Click to request adding this site to the trusted whitelist."
+      });
+    });
+    
+    return true;  // Keep channel open for async response
   }
-  return true;  // Keep channel open for async
 });
 
-// Startup: Kick off initial load
-loadConfig();
+// Pre-load config when service worker starts
+loadConfig().catch(error => {
+  console.error("Failed to pre-load config:", error);
+});
