@@ -47,6 +47,11 @@ function createWarningBar() {
 
   // Fetch email details from background script
   chrome.runtime.sendMessage({ action: "getSupportEmail" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("Error getting support email:", chrome.runtime.lastError);
+      return;
+    }
+    
     const supportEmail = response && response.supportEmail ? response.supportEmail : "support@example.com";
     const requestButtonTitle = response && response.requestButtonTitle ? response.requestButtonTitle : "Request to unlock";
     const emailSubject = response && response.emailSubject ? response.emailSubject : "Request to unlock password field";
@@ -73,41 +78,98 @@ function hasPasswordFields(doc) {
   return doc.querySelector(selectors) !== null;
 }
 
-// Main logic
-chrome.runtime.sendMessage({ action: "isWhitelisted", domain: currentDomain }, (response) => {
-  if (response && response.isWhitelisted === false) {
-    // Check current document
-    if (hasPasswordFields(document)) {
-      document.body.insertBefore(createWarningBar(), document.body.firstChild);
-      warningBarAdded = true;
-    }
-
-    // Observe for dynamic content (new password fields appearing later)
-    const observer = new MutationObserver(debounce(() => {
-      if (!warningBarAdded && hasPasswordFields(document)) {
-        document.body.insertBefore(createWarningBar(), document.body.firstChild);
-        warningBarAdded = true;
-      }
-    }, 500));
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-
-    // Also handle iframes (basic support)
-    document.querySelectorAll("iframe").forEach((iframe) => {
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (iframeDoc && hasPasswordFields(iframeDoc)) {
-          if (!warningBarAdded) {
-            document.body.insertBefore(createWarningBar(), document.body.firstChild);
-            warningBarAdded = true;
-          }
-        }
-      } catch (e) {
-        // Cross-origin iframe – can't access
-      }
-    });
+// Add warning bar if needed
+function addWarningBarIfNeeded() {
+  if (!warningBarAdded && hasPasswordFields(document)) {
+    document.body.insertBefore(createWarningBar(), document.body.firstChild);
+    warningBarAdded = true;
   }
-});
+}
+
+// Check whitelist with retry logic
+async function checkWhitelistWithRetry(maxRetries = 3, delay = 100) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: "isWhitelisted", domain: currentDomain },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
+
+      // Successfully got a response
+      if (response && typeof response.isWhitelisted === 'boolean') {
+        return response;
+      }
+      
+      // If we got an invalid response, wait and retry
+      console.warn(`Attempt ${attempt + 1}: Invalid response, retrying...`);
+      if (attempt < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+      }
+      
+    } catch (error) {
+      console.error(`Attempt ${attempt + 1} failed:`, error);
+      if (attempt < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+      }
+    }
+  }
+  
+  // If all retries failed, assume not whitelisted for safety
+  console.error("All retry attempts failed, assuming not whitelisted");
+  return { isWhitelisted: false };
+}
+
+// Main initialization function
+async function initialize() {
+  try {
+    // Check if domain is whitelisted (with retry logic)
+    const response = await checkWhitelistWithRetry();
+    
+    if (response.isWhitelisted === false) {
+      // Check current document for password fields
+      addWarningBarIfNeeded();
+
+      // Observe for dynamic content (new password fields appearing later)
+      const observer = new MutationObserver(debounce(() => {
+        addWarningBarIfNeeded();
+      }, 500));
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+
+      // Also handle iframes (basic support)
+      document.querySelectorAll("iframe").forEach((iframe) => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (iframeDoc && hasPasswordFields(iframeDoc)) {
+            addWarningBarIfNeeded();
+          }
+        } catch (e) {
+          // Cross-origin iframe – can't access
+        }
+      });
+    } else {
+      console.log(`Domain ${currentDomain} is whitelisted - no warning needed`);
+    }
+  } catch (error) {
+    console.error("Error initializing PassfieldGuard:", error);
+  }
+}
+
+// Wait for DOM to be ready before initializing
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
+} else {
+  // DOM is already ready
+  initialize();
+}
